@@ -26,6 +26,7 @@
 #include "sched_interface.h"
 #include "srsenb/hdr/common/rnti_pool.h"
 #include "srsenb/hdr/stack/mac/schedulers/sched_time_rr.h"
+#include "srsenb/hdr/stack/mac/schedulers/sched_time_cust.h"
 #include "srsran/adt/circular_map.h"
 #include "srsran/adt/pool/batch_mem_pool.h"
 #include "srsran/common/mac_pcap.h"
