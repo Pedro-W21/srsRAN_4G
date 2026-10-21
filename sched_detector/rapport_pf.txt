@@ -1,0 +1,35 @@
+Politique détectée : Scheduler personnalisé  (confiance faible)
+Modèle connu le plus proche : Proportional Fair (alpha=2.5) (76% des gagnants prédits)
+
+Justification :
+  - Le numéro de TTI n'explique pas le gagnant (gain normalisé -0.47, seuil 0.9) : ce n'est pas un RR.
+  - Aucun modèle PF / Max C/I / BET ne reproduit les décisions nettes : au mieux 56% sur 593 TTI décisifs (Proportional Fair (alpha=6)), seuil 95%.
+  - Canaux presque identiques (écart 1.00) : un Max C/I choisit alors au gré de fluctuations de CQI invisibles dans le log et ressemble à une politique inconnue. Dégrader le canal d'un UE pour confirmer.
+
+UE : 2 | TTI avec allocation : 65738 | TTI disputés : 1144 | reprises de trafic : 465 | bande partagée : 0%
+    RNTI  TTI gagnés  part (régime établi)  octets/RBG
+    0x46           0                   nan         nan
+    0x47         573                   nan       269.8
+    0x52           0                   nan         nan
+    0x53         571                   nan       269.8
+    0x60           0                   nan         nan
+    0x61           0                   nan       269.8
+
+Modèle rejoué                        précision  décisifs  TTI décisifs
+Round Robin                                26%       26%          1144
+Max C/I                                    51%       65%            49
+Proportional Fair (alpha=0.25)             71%       52%            81
+Proportional Fair (alpha=0.5)              69%       45%           186
+Proportional Fair (alpha=0.75)             70%       47%           223
+Proportional Fair (alpha=1)                71%       48%           251
+Proportional Fair (alpha=1.25)             72%       49%           277
+Proportional Fair (alpha=1.5)              72%       50%           296
+Proportional Fair (alpha=1.75)             73%       50%           317
+Proportional Fair (alpha=2)                74%       51%           339
+Proportional Fair (alpha=2.5)              76%       52%           374
+Proportional Fair (alpha=3)                74%       52%           406
+Proportional Fair (alpha=4)                73%       55%           474
+Proportional Fair (alpha=6)                73%       56%           593
+Blind Equal Throughput                     73%       49%           317
+
+Politique annoncée par srsENB au démarrage : time-domain PF

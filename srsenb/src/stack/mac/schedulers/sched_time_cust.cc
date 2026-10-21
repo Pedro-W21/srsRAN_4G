@@ -64,7 +64,7 @@ void sched_time_cust::sched_dl_retxs(sched_ue_list& ue_db, sf_sched* tti_sched, 
 
 void sched_time_cust::sched_dl_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched, size_t prio_idx)
 {
-  uint32_t slot_mul = 5;
+  uint32_t slot_mul = 100;
   uint32_t slots = 1;
   auto iter = ue_db.begin();
   std::advance(iter, prio_idx);

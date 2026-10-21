@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: sched-detector
+Version: 1.0.0
+Summary: Détection de la politique de scheduling DL de srsENB (srsRAN 4G) à partir de ses logs
+Requires-Python: >=3.10
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: ruff>=0.6; extra == "dev"
+Requires-Dist: mypy>=1.10; extra == "dev"
+Requires-Dist: pyzmq>=25; extra == "dev"
+Requires-Dist: numpy>=1.24; extra == "dev"
+Provides-Extra: testbed
+Requires-Dist: pyzmq>=25; extra == "testbed"
+Requires-Dist: numpy>=1.24; extra == "testbed"
