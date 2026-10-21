@@ -64,7 +64,7 @@ void sched_time_cust::sched_dl_retxs(sched_ue_list& ue_db, sf_sched* tti_sched, 
 
 void sched_time_cust::sched_dl_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched, size_t prio_idx)
 {
-  uint32_t slot_mul = 5;
+  uint32_t slot_mul = 50;
   uint32_t slots = 1;
   auto iter = ue_db.begin();
   std::advance(iter, prio_idx);
@@ -84,7 +84,10 @@ void sched_time_cust::sched_dl_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched,
       }
       if (try_dl_newtx_alloc_greedy(*tti_sched, user, *h) == alloc_result::no_cch_space) {
         logger.info("SCHED: Couldn't find space in PDCCH/PUCCH for DL tx for rnti=0x%x", user.get_rnti());
-      }  
+      }
+      else {
+        logger.info("SCHED: allocated DL slot number %d/%d for UE %d", slot_number, slots, ue_count);
+      }
     }
     slots *= slot_mul;
   }
@@ -129,7 +132,7 @@ void sched_time_cust::sched_ul_retxs(sched_ue_list& ue_db, sf_sched* tti_sched, 
 void sched_time_cust::sched_ul_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched, size_t prio_idx)
 {
 
-  uint32_t slot_mul = 5;
+  uint32_t slot_mul = 50;
   uint32_t slots = 1;
   auto iter = ue_db.begin();
   std::advance(iter, prio_idx);
@@ -174,6 +177,9 @@ void sched_time_cust::sched_ul_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched,
         logger.info(
             "SCHED: rnti=0x%x, cc=%d, Couldn't find space in PDCCH for UL tx", user.get_rnti(), cc_cfg->enb_cc_idx);
       }  
+      else {
+        logger.info("SCHED: allocated UL slot number %d/%d for UE %d", slot_number, slots, ue_count);
+      }
     }
     slots *= slot_mul;
   }
