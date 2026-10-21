@@ -380,7 +380,7 @@ void sched::carrier_sched::carrier_cfg(const sched_cell_params_t& cell_params_)
     logger.info("Using time-domain RR scheduling policy for cc=%d", cc_cfg->enb_cc_idx);
   } else if (cell_params_.sched_cfg->sched_policy == "bestest_policy") {
     sched_algo.reset(new sched_time_cust{*cc_cfg, *cell_params_.sched_cfg});
-    logger.info("Using time-domain Custom scheduling policy for cc=%d", cc_cfg->enb_cc_idx);
+    logger.info("Using time-domain custom scheduling policy for cc=%d", cc_cfg->enb_cc_idx);
   } else {
     sched_algo.reset(new sched_time_pf{*cc_cfg, *cell_params_.sched_cfg});
     logger.info("Using time-domain PF scheduling policy for cc=%d", cc_cfg->enb_cc_idx);
