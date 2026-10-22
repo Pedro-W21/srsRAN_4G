@@ -524,6 +524,12 @@ class Broker:
                     socket.connect(self._config.ue_tx_connect(ue.index))
                     generation = current_generation
                     pending = False
+                with self._condition:
+                    if ue.state is not UeState.ACTIVE and not pending:
+                        self._condition.wait(
+                            POLL_PERIOD_MS / 1_000
+                        )
+                        continue
                 if not pending:
                     socket.send(b"\xff")
                     pending = True
@@ -638,7 +644,13 @@ class Broker:
             now = time.monotonic()
             with self._condition:
                 dl, ul = self._dl_total, self._ul_total
-                states = ", ".join(f"{ue.label} {ue.state.value}" for ue in self._ues)
+                states = ", ".join(
+                    f"{ue.label} {ue.state.value} "
+                    f"UL={ue.ul_samples / 1e6:.1f}M "
+                    f"DL={ue.dl_samples / 1e6:.1f}M "
+                    f"backlog={1000 * ue.dl_backlog / self._config.base_srate_hz:.1f}ms"
+                    for ue in self._ues
+                )
             elapsed = now - previous_time
             logger.info(
                 "DL %.2f Méch/s | UL %.2f Méch/s | %s",
