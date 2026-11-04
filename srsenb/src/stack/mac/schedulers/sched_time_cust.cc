@@ -64,8 +64,22 @@ void sched_time_cust::sched_dl_retxs(sched_ue_list& ue_db, sf_sched* tti_sched, 
 
 void sched_time_cust::sched_dl_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched, size_t prio_idx)
 {
-  uint32_t slot_mul = 100;
   uint32_t slots = 11;
+  uint16_t smallest_rnti = (uint16_t) (pow(2, 16) - 1);
+  auto pre_iter = ue_db.begin();
+  std::advance(pre_iter, prio_idx);
+  for (uint32_t ue_count = 0; ue_count < ue_db.size(); ++pre_iter, ++ue_count) {
+    if (pre_iter == ue_db.end()) {
+      pre_iter = ue_db.begin(); // wrap around
+    }
+    sched_ue& user = *pre_iter->second;
+    if (user.enb_to_ue_cc_idx(cc_cfg->enb_cc_idx) < 0) {
+      continue;
+    }
+    if (user.get_rnti() < smallest_rnti) {
+      smallest_rnti = user.get_rnti();
+    }
+  }
   auto iter = ue_db.begin();
   std::advance(iter, prio_idx);
   for (uint32_t ue_count = 0; ue_count < ue_db.size(); ++iter, ++ue_count) {
@@ -76,11 +90,11 @@ void sched_time_cust::sched_dl_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched,
     if (user.enb_to_ue_cc_idx(cc_cfg->enb_cc_idx) < 0) {
       continue;
     }
-    if (user.get_rnti() == 0x46) {
-      slots = 10;
+    if (user.get_rnti() == smallest_rnti) {
+      slots = 100;
     }
     else {
-      slots = 100;
+      slots = 10;
     }
     bool success = false;
     for (uint32_t slot_number = 0; slot_number < slots; ++slot_number) {
@@ -107,7 +121,6 @@ void sched_time_cust::sched_dl_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched,
         logger.info("SCHED: couldn't allocate DL slot for UE %d because of %s", ue_count, to_string(ret));
       }
     }
-    slots *= slot_mul;
   }
 }
 
@@ -149,9 +162,22 @@ void sched_time_cust::sched_ul_retxs(sched_ue_list& ue_db, sf_sched* tti_sched, 
 
 void sched_time_cust::sched_ul_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched, size_t prio_idx)
 {
-
-  uint32_t slot_mul = 100;
   uint32_t slots = 11;
+  uint16_t smallest_rnti = (uint16_t) (pow(2, 16) - 1);
+  auto pre_iter = ue_db.begin();
+  std::advance(pre_iter, prio_idx);
+  for (uint32_t ue_count = 0; ue_count < ue_db.size(); ++pre_iter, ++ue_count) {
+    if (pre_iter == ue_db.end()) {
+      pre_iter = ue_db.begin(); // wrap around
+    }
+    sched_ue& user = *pre_iter->second;
+    if (user.enb_to_ue_cc_idx(cc_cfg->enb_cc_idx) < 0) {
+      continue;
+    }
+    if (user.get_rnti() < smallest_rnti) {
+      smallest_rnti = user.get_rnti();
+    }
+  }
   auto iter = ue_db.begin();
   std::advance(iter, prio_idx);
   for (uint32_t ue_count = 0; ue_count < ue_db.size(); ++iter, ++ue_count) {
@@ -171,11 +197,11 @@ void sched_time_cust::sched_ul_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched,
     if (ul_disabled) {
       continue;
     }
-    if (user.get_rnti() == 0x46) {
-      slots = 10;
+    if (user.get_rnti() == smallest_rnti) {
+      slots = 100;
     }
     else {
-      slots = 100;
+      slots = 10;
     }
     bool success = false;
     for (uint32_t slot_number = 0; slot_number < slots; ++slot_number) {
@@ -215,7 +241,6 @@ void sched_time_cust::sched_ul_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched,
         logger.info("SCHED: couldn't allocate UL slot for UE %d because of %s", ue_count, to_string(ret));
       }
     }
-    slots *= slot_mul;
   }
 }
 
