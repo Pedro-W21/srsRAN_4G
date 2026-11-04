@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sched_detector.classifier import ModelEvidence, Verdict, best_pf_by_accuracy, classify
+from sched_detector.fairness import DEFAULT_JAIN_WINDOW_TTI, FairnessReport, compute_fairness
 from sched_detector.features import SchedulerFeatures, build_timeline, extract_features
 from sched_detector.log_parser import DlAllocation
 from sched_detector.models import arbitrate, fit_pf_family, fit_round_robin
@@ -23,14 +24,20 @@ class Detection:
         features: Métriques descriptives.
         evidence: Rejeu des modèles connus.
         verdict: Politique détectée et justification.
+        fairness: Indices d'équité de Jain.
     """
 
     features: SchedulerFeatures
     evidence: ModelEvidence
     verdict: Verdict
+    fairness: FairnessReport
 
 
-def detect(allocations: Sequence[DlAllocation], nof_ues: int | None = None) -> Detection:
+def detect(
+    allocations: Sequence[DlAllocation],
+    nof_ues: int | None = None,
+    jain_window_tti: int = DEFAULT_JAIN_WINDOW_TTI,
+) -> Detection:
     """Analyse les allocations DL d'une porteuse.
 
     Args:
@@ -38,14 +45,17 @@ def detect(allocations: Sequence[DlAllocation], nof_ues: int | None = None) -> D
             :func:`sched_detector.log_parser.read_log`).
         nof_ues: Nombre d'UE connectés, si certains n'apparaissent pas dans
             le log.
+        jain_window_tti: Fenêtre de l'indice de Jain à court terme, en TTI.
 
     Returns:
-        Métriques, résultats des modèles et verdict.
+        Métriques, résultats des modèles, verdict et indices d'équité.
 
     Raises:
-        ValueError: Si le log ne contient aucune nouvelle transmission DL.
+        ValueError: Si le log ne contient aucune nouvelle transmission DL,
+            ou si ``jain_window_tti < 1``.
     """
     timeline = build_timeline(allocations, nof_ues)
+    fairness = compute_fairness(timeline, window_tti=jain_window_tti)
     features = extract_features(timeline)
     round_robin = fit_round_robin(timeline)
     pf_family = fit_pf_family(timeline) if timeline.contested else ()
@@ -58,4 +68,4 @@ def detect(allocations: Sequence[DlAllocation], nof_ues: int | None = None) -> D
         rr_wins = arbitration.first_model_correct
         pf_wins = arbitration.second_model_correct
     evidence = ModelEvidence(round_robin, pf_family, disagreements, rr_wins, pf_wins)
-    return Detection(features, evidence, classify(features, evidence))
+    return Detection(features, evidence, classify(features, evidence), fairness)

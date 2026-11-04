@@ -339,6 +339,32 @@ def build_timeline(allocations: Sequence[DlAllocation], nof_ues: int | None = No
     )
 
 
+def full_contention_ttis(
+    timeline: Timeline, transient_exclusion_tti: int = DEFAULT_TRANSIENT_EXCLUSION_TTI
+) -> list[ContestedTti]:
+    """TTI disputés en régime établi où **tous** les UE avaient des données.
+
+    C'est la seule situation où la politique arbitre entre tous les UE à
+    demande égale : les parts et les indices d'équité y sont comparables
+    d'un essai à l'autre, quel que soit le profil de trafic.
+
+    Args:
+        timeline: Sortie de :func:`build_timeline`.
+        transient_exclusion_tti: TTI ignorés après chaque reprise de trafic.
+
+    Returns:
+        Les TTI retenus, dans l'ordre chronologique.
+    """
+    all_rntis = frozenset(timeline.rntis)
+    return [
+        item
+        for item in _exclude_transients(
+            timeline.contested, timeline.resume_ttis, transient_exclusion_tti
+        )
+        if item.backlogged_rntis == all_rntis
+    ]
+
+
 def _greedy_violation_rate(timeline: Timeline) -> float:
     """Part des TTI disputés où au moins deux UE restent non satisfaits.
 
@@ -390,12 +416,7 @@ def extract_features(
         )
 
     phase_lock, phase_lock_excess = _phase_lock(contested, timeline.nof_ues)
-    all_rntis = frozenset(timeline.rntis)
-    full_contention = [
-        item
-        for item in _exclude_transients(contested, timeline.resume_ttis, transient_exclusion_tti)
-        if item.backlogged_rntis == all_rntis
-    ]
+    full_contention = full_contention_ttis(timeline, transient_exclusion_tti)
     wins = Counter(item.winner.rnti for item in contested)
     steady_wins = Counter(item.winner.rnti for item in full_contention)
     ues = tuple(

@@ -6,6 +6,7 @@ Usage:
     sched-detect /tmp/enb.log --expect custom    # ma politique ne doit pas passer
                                                  # pour une politique connue
     sched-detect /tmp/enb.log --cc 0 --nof-ues 3 --verbose
+    sched-detect /tmp/enb.log --jain-window 10   # équité à 10 ms
 
 Le log doit contenir les lignes ``SCHED: DL tx`` (``mac_level = info`` dans
 la section ``[log]`` de ``enb.conf``).
@@ -28,6 +29,7 @@ from pathlib import Path
 
 from sched_detector.classifier import Policy
 from sched_detector.detector import Detection, detect
+from sched_detector.fairness import DEFAULT_JAIN_WINDOW_TTI
 from sched_detector.log_parser import find_declared_policy, read_log
 
 logger = logging.getLogger(__name__)
@@ -65,12 +67,57 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Politique attendue : le code de sortie vaut 2 si elle n'est pas détectée.",
     )
+    parser.add_argument(
+        "--jain-window",
+        type=int,
+        default=DEFAULT_JAIN_WINDOW_TTI,
+        metavar="TTI",
+        help=(
+            "Fenêtre de l'indice de Jain à court terme, en TTI "
+            f"(défaut {DEFAULT_JAIN_WINDOW_TTI}, constante de temps du PF de srsRAN)."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Affiche les messages de debug.")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.jain_window < 1:
+        parser.error(f"--jain-window doit être >= 1, reçu {args.jain_window}")
+    return args
 
 
 def _format_ratio(value: float) -> str:
     return "   -" if math.isnan(value) else f"{value:4.0%}"
+
+
+def _format_index(value: float) -> str:
+    return "-" if math.isnan(value) else f"{value:.3f}"
+
+
+def _format_fairness(detection: Detection) -> list[str]:
+    """Section « Équité (indice de Jain) » du rapport."""
+    fairness = detection.fairness
+    nof_ues = len(fairness.ues)
+    lines = [
+        f"Équité (indice de Jain, 1 = parfait, 1/{nof_ues} = un seul UE servi) :",
+        f"  débit sur tout le log                  : {_format_index(fairness.jain_throughput)}"
+        "   (dépend du trafic offert)",
+        f"  débit en pleine contention             : "
+        f"{_format_index(fairness.jain_contention_throughput)}"
+        f"   ({fairness.nof_contention_tti} TTI)",
+        f"  RBG en pleine contention               : {_format_index(fairness.jain_contention_rbg)}"
+        "   (partage des ressources, hors canal)",
+        f"  court terme, fenêtres de {fairness.window_tti:>4} TTI     : "
+        f"{_format_index(fairness.jain_short_term)}"
+        f"   (min {_format_index(fairness.jain_short_term_min)}, "
+        f"{fairness.nof_windows} fenêtres)",
+        f"{'RNTI':>8} {'débit moyen (Mbit/s)':>21} {'octets (contention)':>20} "
+        f"{'RBG (contention)':>17}",
+    ]
+    lines.extend(
+        f"{f'0x{ue.rnti:x}':>8} {ue.mean_throughput_mbps:>21.2f} "
+        f"{ue.contention_bytes:>20} {ue.contention_rbg:>17}"
+        for ue in fairness.ues
+    )
+    return lines
 
 
 def format_report(detection: Detection, declared_policy: str | None) -> str:
@@ -103,6 +150,8 @@ def format_report(detection: Detection, declared_policy: str | None) -> str:
             f"{ue.steady_share:>21.3f} {ue.bytes_per_rbg:>11.1f}"
         )
     lines.append("")
+    lines.extend(_format_fairness(detection))
+    lines.append("")
     lines.append(f"{'Modèle rejoué':<36} {'précision':>9} {'décisifs':>9} {'TTI décisifs':>13}")
     for model in (evidence.round_robin, *evidence.pf_family):
         lines.append(
@@ -120,7 +169,7 @@ def format_report(detection: Detection, declared_policy: str | None) -> str:
 def run(args: argparse.Namespace) -> int:
     """Exécute la détection et renvoie le code de sortie."""
     allocations = read_log(args.log, carrier_index=args.cc)
-    detection = detect(allocations, nof_ues=args.nof_ues)
+    detection = detect(allocations, nof_ues=args.nof_ues, jain_window_tti=args.jain_window)
     with args.log.open(encoding="utf-8", errors="replace") as log_file:
         declared_policy = find_declared_policy(log_file)
     sys.stdout.write(format_report(detection, declared_policy) + "\n")
