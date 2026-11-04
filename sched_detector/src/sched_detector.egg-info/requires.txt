@@ -1,0 +1,11 @@
+
+[dev]
+pytest>=8
+ruff>=0.6
+mypy>=1.10
+pyzmq>=25
+numpy>=1.24
+
+[testbed]
+pyzmq>=25
+numpy>=1.24

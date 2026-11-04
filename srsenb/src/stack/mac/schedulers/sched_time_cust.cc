@@ -64,8 +64,22 @@ void sched_time_cust::sched_dl_retxs(sched_ue_list& ue_db, sf_sched* tti_sched, 
 
 void sched_time_cust::sched_dl_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched, size_t prio_idx)
 {
-  uint32_t slot_mul = 5;
-  uint32_t slots = 1;
+  uint32_t slots = 11;
+  uint16_t smallest_rnti = (uint16_t) (pow(2, 16) - 1);
+  auto pre_iter = ue_db.begin();
+  std::advance(pre_iter, prio_idx);
+  for (uint32_t ue_count = 0; ue_count < ue_db.size(); ++pre_iter, ++ue_count) {
+    if (pre_iter == ue_db.end()) {
+      pre_iter = ue_db.begin(); // wrap around
+    }
+    sched_ue& user = *pre_iter->second;
+    if (user.enb_to_ue_cc_idx(cc_cfg->enb_cc_idx) < 0) {
+      continue;
+    }
+    if (user.get_rnti() < smallest_rnti) {
+      smallest_rnti = user.get_rnti();
+    }
+  }
   auto iter = ue_db.begin();
   std::advance(iter, prio_idx);
   for (uint32_t ue_count = 0; ue_count < ue_db.size(); ++iter, ++ue_count) {
@@ -76,17 +90,37 @@ void sched_time_cust::sched_dl_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched,
     if (user.enb_to_ue_cc_idx(cc_cfg->enb_cc_idx) < 0) {
       continue;
     }
+    if (user.get_rnti() == smallest_rnti) {
+      slots = 100;
+    }
+    else {
+      slots = 10;
+    }
+    bool success = false;
     for (uint32_t slot_number = 0; slot_number < slots; ++slot_number) {
+      int roll = rand();
+      if (roll < RAND_MAX/100) {
+        success = true;
+        break;
+      }
+    }
+    if (success) {
       const dl_harq_proc* h = get_dl_newtx_harq(user, tti_sched);
       // Check if there is an empty harq for the newtx
       if (h == nullptr) {
         break;
       }
-      if (try_dl_newtx_alloc_greedy(*tti_sched, user, *h) == alloc_result::no_cch_space) {
+      alloc_result ret = try_dl_newtx_alloc_greedy(*tti_sched, user, *h);
+      if (ret == alloc_result::no_cch_space) {
         logger.info("SCHED: Couldn't find space in PDCCH/PUCCH for DL tx for rnti=0x%x", user.get_rnti());
-      }  
+      }
+      else if (ret == alloc_result::success) {
+        logger.info("SCHED: allocated DL slot for UE %d", ue_count);
+      }
+      else {
+        logger.info("SCHED: couldn't allocate DL slot for UE %d because of %s", ue_count, to_string(ret));
+      }
     }
-    slots *= slot_mul;
   }
 }
 
@@ -128,9 +162,22 @@ void sched_time_cust::sched_ul_retxs(sched_ue_list& ue_db, sf_sched* tti_sched, 
 
 void sched_time_cust::sched_ul_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched, size_t prio_idx)
 {
-
-  uint32_t slot_mul = 5;
-  uint32_t slots = 1;
+  uint32_t slots = 11;
+  uint16_t smallest_rnti = (uint16_t) (pow(2, 16) - 1);
+  auto pre_iter = ue_db.begin();
+  std::advance(pre_iter, prio_idx);
+  for (uint32_t ue_count = 0; ue_count < ue_db.size(); ++pre_iter, ++ue_count) {
+    if (pre_iter == ue_db.end()) {
+      pre_iter = ue_db.begin(); // wrap around
+    }
+    sched_ue& user = *pre_iter->second;
+    if (user.enb_to_ue_cc_idx(cc_cfg->enb_cc_idx) < 0) {
+      continue;
+    }
+    if (user.get_rnti() < smallest_rnti) {
+      smallest_rnti = user.get_rnti();
+    }
+  }
   auto iter = ue_db.begin();
   std::advance(iter, prio_idx);
   for (uint32_t ue_count = 0; ue_count < ue_db.size(); ++iter, ++ue_count) {
@@ -138,6 +185,7 @@ void sched_time_cust::sched_ul_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched,
       iter = ue_db.begin(); // wrap around
     }
     sched_ue&           user = *iter->second;
+    
     // Allocate only if UL carrier is enabled
     bool ul_disabled = false;
     for (auto& i : user.get_ue_cfg().supported_cc_list) {
@@ -149,10 +197,22 @@ void sched_time_cust::sched_ul_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched,
     if (ul_disabled) {
       continue;
     }
-
+    if (user.get_rnti() == smallest_rnti) {
+      slots = 100;
+    }
+    else {
+      slots = 10;
+    }
+    bool success = false;
     for (uint32_t slot_number = 0; slot_number < slots; ++slot_number) {
-      
+      int roll = rand();
+      if (roll < RAND_MAX/100) {
+        success = true;
+        break;
+      }
+    }
 
+    if (success) {
       const ul_harq_proc* h    = get_ul_newtx_harq(user, tti_sched);
       // Check if there is a empty harq
       if (h == nullptr) {
@@ -174,8 +234,13 @@ void sched_time_cust::sched_ul_newtxs(sched_ue_list& ue_db, sf_sched* tti_sched,
         logger.info(
             "SCHED: rnti=0x%x, cc=%d, Couldn't find space in PDCCH for UL tx", user.get_rnti(), cc_cfg->enb_cc_idx);
       }  
+      else if (ret == alloc_result::success) {
+        logger.info("SCHED: allocated UL slot for UE %d", ue_count);
+      }
+      else {
+        logger.info("SCHED: couldn't allocate UL slot for UE %d because of %s", ue_count, to_string(ret));
+      }
     }
-    slots *= slot_mul;
   }
 }
 

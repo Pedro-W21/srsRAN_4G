@@ -1,0 +1,31 @@
+Politique détectée : time_rr (Round Robin)  (confiance élevée)
+
+Justification :
+  - Le gagnant est fixé par (tti_tx_dl mod N, UE en attente) : précision 0.979 en validation croisée, gain normalisé 0.96. C'est la rotation de sched_time_rr.
+  - Aucun modèle de la famille PF ne reproduit ces décisions.
+
+UE : 2 | TTI avec allocation : 43980 | TTI disputés : 1106 | reprises de trafic : 523 | bande partagée : 0%
+    RNTI  TTI gagnés  part (régime établi)  octets/RBG
+    0x46           0                   nan         nan
+    0x47         576                   nan       269.8
+    0x52           0                   nan         nan
+    0x53         530                   nan       269.8
+
+Modèle rejoué                        précision  décisifs  TTI décisifs
+Round Robin                                98%       98%          1106
+Max C/I                                    50%      100%             3
+Proportional Fair (alpha=0.25)             65%       28%           100
+Proportional Fair (alpha=0.5)              66%       37%           166
+Proportional Fair (alpha=0.75)             67%       41%           223
+Proportional Fair (alpha=1)                66%       43%           274
+Proportional Fair (alpha=1.25)             66%       45%           322
+Proportional Fair (alpha=1.5)              66%       47%           380
+Proportional Fair (alpha=1.75)             66%       49%           452
+Proportional Fair (alpha=2)                66%       50%           541
+Proportional Fair (alpha=2.5)              66%       47%           590
+Proportional Fair (alpha=3)                66%       47%           597
+Proportional Fair (alpha=4)                67%       48%           611
+Proportional Fair (alpha=6)                67%       49%           634
+Blind Equal Throughput                     67%       50%           466
+
+Politique annoncée par srsENB au démarrage : time-domain RR

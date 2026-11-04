@@ -23,6 +23,7 @@
 #define SRSENB_SCHEDULER_BESTEST
 
 #include "sched_base.h"
+#include <cmath>
 
 namespace srsenb {
 

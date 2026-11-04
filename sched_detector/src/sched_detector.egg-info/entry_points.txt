@@ -1,0 +1,4 @@
+[console_scripts]
+sched-detect = sched_detector.cli:main
+sched-simulate = sched_detector.simulator:main
+srsran-zmq-broker = sched_detector.testbed.zmq_broker:main
