@@ -10,7 +10,7 @@ Catalogue : time_rr, time_pf (alpha estimé), Max C/I (PF alpha = 0),
 Blind Equal Throughput (PF alpha → ∞).
 
 Author: Jérémie Caradec (projet RCA, INSA Lyon)
-Date: 2026-10-14
+Date: 2026-10-14 (voie montante : 2026-11-18)
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import math
 from dataclasses import dataclass
 
 from sched_detector.features import SchedulerFeatures
+from sched_detector.log_parser import Direction
 from sched_detector.models import ModelFit
 
 #: Nombre minimal de TTI disputés pour conclure (~0,5 s de saturation).
@@ -47,6 +48,10 @@ MIN_DISAGREEMENTS_FOR_ARBITRATION: int = 30
 ALPHA_PEAK_MARGIN: float = 0.05
 #: Écart de canal au-dessous duquel un Max C/I devient imprévisible.
 MIN_CHANNEL_SPREAD: float = 1.25
+#: Apport minimal (gain sur la prédiction naïve) pour qu'un modèle soit
+#: présenté comme « le plus proche » d'une politique personnalisée. En
+#: dessous, sa précision ne vient que du déséquilibre entre UE.
+CLOSEST_MODEL_MIN_EXCESS: float = 0.5
 
 
 class Policy(enum.Enum):
@@ -80,7 +85,8 @@ class Verdict:
             pas identifiable.
         alpha_range: Plus petite et plus grande valeur de alpha validées
             (``nan`` si aucune).
-        closest_model: Modèle connu qui reproduit le mieux le log, utile
+        closest_model: Modèle connu qui apporte le plus par rapport à la
+            prédiction naïve (voir ``ModelFit.excess_over_baseline``), utile
             pour décrire un scheduler personnalisé.
         closest_accuracy: Précision globale de ce modèle, dans [0, 1].
         reasons: Justifications lisibles, dans l'ordre des règles.
@@ -105,6 +111,8 @@ class ModelEvidence:
         rr_pf_disagreements: TTI où le RR et le meilleur PF divergent.
         rr_wins_disagreements: Parmi eux, TTI où le RR avait raison.
         pf_wins_disagreements: Parmi eux, TTI où le PF avait raison.
+        naive_accuracy: Précision de la prédiction naïve sur tous les TTI
+            disputés (référence de l'apport des modèles).
     """
 
     round_robin: ModelFit
@@ -112,18 +120,45 @@ class ModelEvidence:
     rr_pf_disagreements: int
     rr_wins_disagreements: int
     pf_wins_disagreements: int
+    naive_accuracy: float = math.nan
 
 
 def _no_alpha() -> tuple[float, float]:
     return (math.nan, math.nan)
 
 
-def _closest(evidence: ModelEvidence) -> ModelFit:
+def closest_model(evidence: ModelEvidence) -> ModelFit:
+    """Modèle qui apporte le plus par rapport à la prédiction naïve.
+
+    Classer par précision brute serait trompeur : si un UE gagne 90 % des
+    TTI, tout modèle qui le désigne toujours affiche 90 %. L'apport, lui,
+    vaut 0 dans ce cas.
+    """
     candidates = [evidence.round_robin, *evidence.pf_family]
     scored = [m for m in candidates if not math.isnan(m.accuracy)]
     if not scored:
         return evidence.round_robin
-    return max(scored, key=lambda m: m.accuracy)
+
+    def rank(model: ModelFit) -> tuple[float, float]:
+        excess = model.excess_over_baseline
+        return (-math.inf if math.isnan(excess) else excess, model.accuracy)
+
+    return max(scored, key=rank)
+
+
+def is_round_robin_validated(rr: ModelFit) -> bool:
+    """Le RR reproduit-il le log (apport et précision au-dessus des seuils) ?"""
+    return rr.excess_over_baseline >= RR_MIN_EXCESS and rr.accuracy >= RR_MIN_ACCURACY
+
+
+def is_pf_testable(model: ModelFit) -> bool:
+    """Assez de TTI décisifs pour valider ou rejeter un modèle de la famille PF."""
+    return model.nof_decisive >= PF_MIN_DECISIVE_TTI
+
+
+def is_pf_validated(model: ModelFit) -> bool:
+    """Le modèle PF reproduit-il les décisions nettes du log ?"""
+    return is_pf_testable(model) and model.decisive_accuracy >= PF_MIN_DECISIVE_ACCURACY
 
 
 def best_pf_by_accuracy(pf_family: tuple[ModelFit, ...]) -> ModelFit | None:
@@ -133,11 +168,7 @@ def best_pf_by_accuracy(pf_family: tuple[ModelFit, ...]) -> ModelFit | None:
 
 
 def _validated_pf(pf_family: tuple[ModelFit, ...]) -> list[ModelFit]:
-    return [
-        m
-        for m in pf_family
-        if m.nof_decisive >= PF_MIN_DECISIVE_TTI and m.decisive_accuracy >= PF_MIN_DECISIVE_ACCURACY
-    ]
+    return [m for m in pf_family if is_pf_validated(m)]
 
 
 def classify(features: SchedulerFeatures, evidence: ModelEvidence) -> Verdict:
@@ -159,7 +190,7 @@ def classify(features: SchedulerFeatures, evidence: ModelEvidence) -> Verdict:
     Returns:
         Le verdict et ses justifications.
     """
-    closest = _closest(evidence)
+    closest = closest_model(evidence)
     if features.nof_ues < 2:
         return _inconclusive(
             "Un seul UE : toutes les politiques servent le même UE, rien à comparer.", closest
@@ -179,14 +210,14 @@ def classify(features: SchedulerFeatures, evidence: ModelEvidence) -> Verdict:
                 f"Dans {features.greedy_violation_rate:.0%} des TTI disputés, plusieurs UE "
                 "sont servis tout en gardant des données : la bande est partagée "
                 "(politique fréquentielle ou quota par UE). Les politiques temporelles "
-                "gloutonnes de srsRAN donnent tous les RBG restants au premier UE "
-                "non satisfait."
+                f"gloutonnes de srsRAN donnent tous les {features.direction.resource_unit} "
+                "restants au premier UE non satisfait."
             ],
             confidence=Confidence.HIGH,
         )
 
     rr = evidence.round_robin
-    rr_ok = rr.excess_over_baseline >= RR_MIN_EXCESS and rr.accuracy >= RR_MIN_ACCURACY
+    rr_ok = is_round_robin_validated(rr)
     validated_pf = _validated_pf(evidence.pf_family)
     best_pf = best_pf_by_accuracy(evidence.pf_family)
     pf_explains = best_pf is not None and best_pf.accuracy >= PF_EXPLAINS_ACCURACY
@@ -200,7 +231,7 @@ def classify(features: SchedulerFeatures, evidence: ModelEvidence) -> Verdict:
             rr.name,
             rr.accuracy,
             (
-                _rr_reason(rr),
+                _rr_reason(rr, features.direction),
                 "Aucun modèle de la famille PF ne reproduit ces décisions.",
             ),
         )
@@ -232,16 +263,16 @@ def _inconclusive(reason: str, closest: ModelFit) -> Verdict:
     )
 
 
-def _rr_reason(rr: ModelFit) -> str:
+def _rr_reason(rr: ModelFit, direction: Direction) -> str:
     return (
-        f"Le gagnant est fixé par (tti_tx_dl mod N, UE en attente) : précision "
+        f"Le gagnant est fixé par ({direction.tti_field} mod N, UE en attente) : précision "
         f"{rr.accuracy:.3f} en validation croisée, gain normalisé "
         f"{rr.excess_over_baseline:.2f}. C'est la rotation de sched_time_rr."
     )
 
 
 def _pf_rejection_reason(pf_family: tuple[ModelFit, ...]) -> str:
-    testable = [m for m in pf_family if m.nof_decisive >= PF_MIN_DECISIVE_TTI]
+    testable = [m for m in pf_family if is_pf_testable(m)]
     if not testable:
         return (
             "Trop peu de TTI décisifs pour tester la famille PF (canaux et débits "
@@ -259,7 +290,10 @@ def _arbitrate_rr_and_pf(
     evidence: ModelEvidence, validated_pf: list[ModelFit], features: SchedulerFeatures
 ) -> Verdict:
     rr = evidence.round_robin
-    reasons = [_rr_reason(rr), "Un modèle de la famille PF reproduit aussi ces décisions."]
+    reasons = [
+        _rr_reason(rr, features.direction),
+        "Un modèle de la famille PF reproduit aussi ces décisions.",
+    ]
     disagreements = evidence.rr_pf_disagreements
     if disagreements >= MIN_DISAGREEMENTS_FOR_ARBITRATION:
         reasons.append(

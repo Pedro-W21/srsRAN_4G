@@ -30,7 +30,7 @@ IDENTICAL_CHANNELS: list[float] = [300, 300]
 
 
 def _ues(
-    bytes_per_rbg: list[float],
+    bytes_per_resource: list[float],
     is_first_intermittent: bool = True,
     arrivals: list[int] | None = None,
 ) -> tuple[SimulatedUe, ...]:
@@ -39,12 +39,12 @@ def _ues(
     return tuple(
         SimulatedUe(
             rnti=0x46 + index,
-            bytes_per_rbg=rate,
+            bytes_per_resource=rate,
             arrival_bytes_per_tti=arrivals[index] if arrivals else SATURATING_ARRIVAL_BYTES,
             on_duration_tti=1_000 if (is_first_intermittent and index == 0) else 0,
             off_duration_tti=500 if (is_first_intermittent and index == 0) else 0,
         )
-        for index, rate in enumerate(bytes_per_rbg)
+        for index, rate in enumerate(bytes_per_resource)
     )
 
 

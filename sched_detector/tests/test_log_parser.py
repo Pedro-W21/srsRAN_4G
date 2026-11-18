@@ -33,10 +33,10 @@ def test_parses_every_field_of_a_real_line() -> None:
     assert allocation.rnti == 0x46
     assert allocation.carrier_index == 0
     assert not allocation.is_retransmission
-    assert allocation.nof_rbg == 17
+    assert allocation.nof_resources == 17
     assert allocation.tbs_bytes == 4584
-    assert (allocation.buffer_before_bytes, allocation.buffer_after_bytes) == (12000, 7400)
-    assert allocation.tti_tx_dl == 5123
+    assert (allocation.pending_before_bytes, allocation.pending_after_bytes) == (12000, 7400)
+    assert allocation.tti == 5123
 
 
 def test_flags_retransmissions() -> None:
@@ -60,7 +60,7 @@ def test_ignores_lines_that_are_not_complete_dl_allocations(line: str) -> None:
 
 def test_filters_other_carriers() -> None:
     lines = [_line(1, cc=0), _line(1, cc=1), _line(2, cc=0)]
-    assert [a.tti_tx_dl for a in parse_lines(lines, carrier_index=0)] == [1, 2]
+    assert [a.tti for a in parse_lines(lines, carrier_index=0)] == [1, 2]
 
 
 def test_unwraps_tti_counter_at_10240() -> None:

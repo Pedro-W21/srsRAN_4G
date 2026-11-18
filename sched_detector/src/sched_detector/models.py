@@ -10,12 +10,13 @@ classer « personnalisée » au lieu de la forcer dans une case.
 Modèles :
 
 * **Round Robin** (``sched_time_rr.cc``) : le gagnant est une fonction fixe
-  du couple (``tti_tx_dl mod N``, UE en attente). L'ordre de ``ue_db`` n'est
+  du couple (``tti_tx mod N``, UE en attente), avec ``tti_tx_dl`` en DL et
+  ``tti_tx_ul`` en UL (même modulo dans ``sched_ul_newtxs``). L'ordre de ``ue_db`` n'est
   pas connu, donc la fonction est apprise sur une moitié du log et évaluée
   sur l'autre (validation croisée à deux plis, pour ne pas récompenser le
   sur-apprentissage).
 * **Famille PF** (``sched_time_pf.cc``) : priorité ``r / R^alpha``, avec R
-  mise à jour comme ``save_dl_alloc`` (moyenne arithmétique sur 100
+  mise à jour comme ``save_dl_alloc`` / ``save_ul_alloc`` (moyenne arithmétique sur 100
   échantillons puis exponentielle de pas 0,01). On rejoue la moyenne à partir
   des octets alloués à chaque UE, lisibles dans le log. Deux cas limites de
   la même formule sont des politiques classiques :
@@ -25,14 +26,14 @@ Modèles :
     (débit égal pour tous).
 
 Author: Jérémie Caradec (projet RCA, INSA Lyon)
-Date: 2026-10-14
+Date: 2026-10-14 (voie montante : 2026-11-18)
 """
 
 from __future__ import annotations
 
 import math
 from collections import Counter, defaultdict
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 
 from sched_detector.features import ContestedTti, Timeline
@@ -66,14 +67,22 @@ class ModelFit:
         predictions: Gagnant prédit par TTI déplié (TTI évalués seulement).
         fairness_alpha: Coefficient d'équité pour la famille PF, ``nan``
             pour les autres modèles.
-        excess_over_baseline: Pour le RR, gain normalisé par rapport à une
-            prédiction qui ignore le numéro de TTI (même principe que le
-            kappa de Cohen) ; ``nan`` pour les autres.
+        excess_over_baseline: « Apport » du modèle : gain normalisé par
+            rapport à la prédiction naïve (voir :func:`naive_accuracy`), sur
+            les mêmes TTI. 1 = il explique toutes les décisions que la
+            prédiction naïve rate, 0 = il ne fait pas mieux qu'elle. Pour le
+            RR, la référence est apprise en validation croisée comme le
+            modèle lui-même.
         decisive_accuracy: Précision sur les seuls TTI « décisifs », où le
             modèle préfère nettement un UE (voir
             :data:`DECISIVE_PRIORITY_RATIO`). Pour le RR, dont les décisions
             sont déterministes, elle vaut ``accuracy``.
         nof_decisive: Nombre de TTI décisifs évalués.
+        judged_naive_accuracy: Précision de la prédiction naïve (désigner
+            toujours le favori, voir :func:`naive_accuracy`) sur les mêmes
+            TTI que ``decisive_accuracy``. C'est la référence qui rend
+            ``decisive_accuracy`` lisible : un modèle qui ne fait pas mieux
+            n'explique rien.
     """
 
     name: str
@@ -84,6 +93,7 @@ class ModelFit:
     excess_over_baseline: float = math.nan
     decisive_accuracy: float = math.nan
     nof_decisive: int = 0
+    judged_naive_accuracy: float = math.nan
 
 
 def _modal(counter: Counter[int] | None) -> int | None:
@@ -92,8 +102,55 @@ def _modal(counter: Counter[int] | None) -> int | None:
     return counter.most_common(1)[0][0]
 
 
+def _excess(accuracy: float, baseline_accuracy: float) -> float:
+    """Gain normalisé sur une référence (même construction que le kappa de Cohen).
+
+    Returns:
+        1 = le modèle explique toutes les décisions que la référence rate,
+        0 = il ne fait pas mieux qu'elle, < 0 = il fait moins bien.
+    """
+    if baseline_accuracy >= 1.0:
+        return 0.0
+    return (accuracy - baseline_accuracy) / (1.0 - baseline_accuracy)
+
+
+def _naive_predictor(timeline: Timeline) -> dict[frozenset[int], int]:
+    """Gagnant le plus fréquent pour chaque ensemble d'UE en attente."""
+    by_set: dict[frozenset[int], Counter[int]] = defaultdict(Counter)
+    for item in timeline.contested:
+        by_set[item.backlogged_rntis][item.winner.rnti] += 1
+    return {key: counter.most_common(1)[0][0] for key, counter in by_set.items()}
+
+
+def naive_accuracy(timeline: Timeline, ttis: Collection[int] | None = None) -> float:
+    """Précision de la prédiction naïve, référence commune à tous les modèles.
+
+    La prédiction naïve ignore tout ce qui fait une politique (numéro de TTI,
+    canal, historique) : pour chaque ensemble d'UE en attente, elle désigne
+    toujours l'UE qui y gagne le plus souvent. Quand un UE gagne 90 % des
+    TTI, elle a déjà raison 90 % du temps : un modèle n'apporte quelque
+    chose que s'il fait mieux qu'elle.
+
+    Args:
+        timeline: Chronologie observée.
+        ttis: TTI (dépliés) sur lesquels l'évaluer ; par défaut tous les TTI
+            disputés.
+
+    Returns:
+        La précision dans [0, 1], ``nan`` si aucun TTI n'est évaluable.
+    """
+    predictor = _naive_predictor(timeline)
+    items = [
+        item for item in timeline.contested if ttis is None or item.winner.tti_unwrapped in ttis
+    ]
+    if not items:
+        return math.nan
+    correct = sum(predictor[item.backlogged_rntis] == item.winner.rnti for item in items)
+    return correct / len(items)
+
+
 def fit_round_robin(timeline: Timeline) -> ModelFit:
-    """Évalue l'hypothèse « gagnant = f(tti_tx_dl mod N, UE en attente) ».
+    """Évalue l'hypothèse « gagnant = f(tti_tx mod N, UE en attente) ».
 
     Args:
         timeline: Chronologie observée.
@@ -113,11 +170,11 @@ def fit_round_robin(timeline: Timeline) -> ModelFit:
         by_key: dict[tuple[int, frozenset[int]], Counter[int]] = defaultdict(Counter)
         by_set: dict[frozenset[int], Counter[int]] = defaultdict(Counter)
         for item in train:
-            residue = item.winner.tti_tx_dl % timeline.nof_ues
+            residue = item.winner.tti % timeline.nof_ues
             by_key[(residue, item.backlogged_rntis)][item.winner.rnti] += 1
             by_set[item.backlogged_rntis][item.winner.rnti] += 1
         for item in test:
-            residue = item.winner.tti_tx_dl % timeline.nof_ues
+            residue = item.winner.tti % timeline.nof_ues
             baseline = _modal(by_set.get(item.backlogged_rntis))
             predicted = _modal(by_key.get((residue, item.backlogged_rntis)))
             if predicted is None:
@@ -131,12 +188,7 @@ def fit_round_robin(timeline: Timeline) -> ModelFit:
     if evaluated == 0:
         return ModelFit("Round Robin", math.nan, 0, predictions)
     accuracy = correct / evaluated
-    baseline_accuracy = correct_baseline / evaluated
-    excess = (
-        0.0
-        if baseline_accuracy >= 1.0
-        else (accuracy - baseline_accuracy) / (1.0 - baseline_accuracy)
-    )
+    excess = _excess(accuracy, correct_baseline / evaluated)
     return ModelFit(
         name="Round Robin",
         accuracy=accuracy,
@@ -145,6 +197,7 @@ def fit_round_robin(timeline: Timeline) -> ModelFit:
         excess_over_baseline=excess,
         decisive_accuracy=accuracy,
         nof_decisive=evaluated,
+        judged_naive_accuracy=naive_accuracy(timeline, predictions.keys()),
     )
 
 
@@ -183,9 +236,10 @@ def _margin(best: float, second: float) -> float:
 def fit_pf_model(timeline: Timeline, alpha: float, warmup_tti: int = PF_WARMUP_TTI) -> ModelFit:
     """Rejoue un PF temporel de coefficient ``alpha`` sur la chronologie.
 
-    Le débit instantané ``r`` d'un UE est le dernier TBS par RBG observé
+    Le débit instantané ``r`` d'un UE est le dernier TBS par ressource (RBG
+    en DL, PRB en UL) observé
     pour lui avec des données restantes (MCS non bridé par le buffer) ; un
-    facteur commun à tous les UE (nombre de RBG) ne change pas le classement.
+    facteur commun à tous les UE (taille de la bande) ne change pas le classement.
     La moyenne R est rejouée pour chaque UE à partir de sa première
     apparition, avec 0 octet les TTI où il n'est pas servi, comme srsRAN le
     fait pour les UE présents dans la file.
@@ -210,7 +264,7 @@ def fit_pf_model(timeline: Timeline, alpha: float, warmup_tti: int = PF_WARMUP_T
     last_rate: dict[int, float] = {}
     predictions: dict[int, int] = {}
     correct = 0
-    decisive = 0
+    decisive_ttis: list[int] = []
     decisive_correct = 0
     for tti in range(timeline.first_tti, timeline.last_tti + 1):
         item = contested_by_tti.get(tti)
@@ -229,27 +283,30 @@ def fit_pf_model(timeline: Timeline, alpha: float, warmup_tti: int = PF_WARMUP_T
             predictions[tti] = predicted
             correct += int(is_correct)
             if _margin(ranked[0][0], ranked[1][0]) >= DECISIVE_PRIORITY_RATIO:
-                decisive += 1
+                decisive_ttis.append(tti)
                 decisive_correct += int(is_correct)
         allocated: dict[int, int] = defaultdict(int)
         for allocation in timeline.allocations_by_tti.get(tti, ()):
             allocated[allocation.rnti] += allocation.tbs_bytes
             averages.setdefault(allocation.rnti, _PfAverage())
-            if allocation.buffer_after_bytes > 0 or allocation.rnti not in last_rate:
-                last_rate[allocation.rnti] = allocation.tbs_bytes / allocation.nof_rbg
+            if allocation.pending_after_bytes > 0 or allocation.rnti not in last_rate:
+                last_rate[allocation.rnti] = allocation.tbs_bytes / allocation.nof_resources
         for rnti, average in averages.items():
             average.update(allocated.get(rnti, 0))
     name = _pf_family_name(alpha)
     if not predictions:
         return ModelFit(name, math.nan, 0, predictions, fairness_alpha=alpha)
+    accuracy = correct / len(predictions)
     return ModelFit(
         name=name,
-        accuracy=correct / len(predictions),
+        accuracy=accuracy,
         nof_evaluated=len(predictions),
         predictions=predictions,
         fairness_alpha=alpha,
-        decisive_accuracy=decisive_correct / decisive if decisive else math.nan,
-        nof_decisive=decisive,
+        excess_over_baseline=_excess(accuracy, naive_accuracy(timeline, predictions.keys())),
+        decisive_accuracy=decisive_correct / len(decisive_ttis) if decisive_ttis else math.nan,
+        nof_decisive=len(decisive_ttis),
+        judged_naive_accuracy=naive_accuracy(timeline, frozenset(decisive_ttis)),
     )
 
 

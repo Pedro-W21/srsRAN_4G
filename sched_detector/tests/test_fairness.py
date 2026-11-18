@@ -81,14 +81,14 @@ def test_jain_index_rejects_invalid_values(bad_value: float) -> None:
 
 def test_round_robin_shares_resources_equally_not_throughput() -> None:
     report = _fairness(SimulatedPolicy.ROUND_ROBIN)
-    assert report.jain_contention_rbg == pytest.approx(1.0, abs=0.01)
+    assert report.jain_contention_resources == pytest.approx(1.0, abs=0.01)
     assert report.jain_contention_throughput == pytest.approx(TWO_CHANNELS_JAIN_BYTES, abs=0.01)
 
 
 def test_blind_equal_throughput_equalises_throughput() -> None:
     report = _fairness(SimulatedPolicy.BLIND_EQUAL_THROUGHPUT)
     assert report.jain_contention_throughput == pytest.approx(1.0, abs=0.01)
-    assert report.jain_contention_rbg < 0.95
+    assert report.jain_contention_resources < 0.95
 
 
 def test_max_ci_serves_a_single_ue_under_contention() -> None:
@@ -146,7 +146,7 @@ def test_cli_prints_fairness_section(tmp_path: Path, capsys: pytest.CaptureFixtu
     assert main([str(path), "--jain-window", "10"]) == EXIT_OK
     output = capsys.readouterr().out
     assert "indice de Jain" in output
-    assert "fenêtres de   10 TTI" in output
+    assert "fenêtres de 10 TTI" in output
 
 
 def test_cli_rejects_invalid_window(tmp_path: Path) -> None:

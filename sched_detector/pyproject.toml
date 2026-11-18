@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sched-detector"
-version = "1.0.0"
-description = "Détection de la politique de scheduling DL de srsENB (srsRAN 4G) à partir de ses logs"
+version = "1.2.0"
+description = "Détection de la politique de scheduling DL et UL de srsENB (srsRAN 4G) à partir de ses logs"
 requires-python = ">=3.10"
 dependencies = []
 

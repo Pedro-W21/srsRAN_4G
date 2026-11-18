@@ -1,4 +1,4 @@
-"""Indice d'équité de Jain calculé sur les allocations DL du log.
+"""Indice d'équité de Jain calculé sur les allocations DL ou UL du log.
 
 Définition (Jain, Chiu et Hawe, DEC-TR-301, 1984) pour n UE de débits x_i ::
 
@@ -6,7 +6,7 @@ Définition (Jain, Chiu et Hawe, DEC-TR-301, 1984) pour n UE de débits x_i ::
 
 J vaut 1 quand tous les UE reçoivent la même chose et 1/n quand un seul UE
 reçoit tout. L'indice ne dépend pas de l'unité (J(c·x) = J(x)) : on peut
-le calculer directement sur des octets ou des RBG cumulés, sans diviser par
+le calculer directement sur des octets ou des ressources cumulées, sans diviser par
 la durée.
 
 Quatre indices sont calculés, parce qu'« équitable » n'a pas le même sens
@@ -19,8 +19,8 @@ selon la grandeur et la période observées :
   établi où tous les UE avaient des données (même sélection que la colonne
   « part (régime établi) »). À demande égale, c'est l'équité que la
   politique produit elle-même.
-* **Ressources en pleine contention** : RBG au lieu d'octets. Sépare la
-  politique du canal : un RR donne J_RBG ≈ 1 même avec des canaux
+* **Ressources en pleine contention** : RBG (DL) ou PRB (UL) au lieu
+  d'octets. Sépare la politique du canal : un RR donne J ≈ 1 même avec des canaux
   différents, alors que son J en octets baisse avec l'écart de CQI.
 * **Court terme** : moyenne de J (en octets) sur des fenêtres de W TTI de
   pleine contention consécutifs. L'allocation gloutonne de srsRAN sert un
@@ -32,7 +32,7 @@ Repères théoriques en pleine contention (PF temporel, part des TTI
 ``f_i ∝ r_i^(1/alpha - 1)``, voir ``features.py``) :
 
 =====================  ==============  ======================
-Politique              J sur les RBG   J sur les octets
+Politique              J ressources    J sur les octets
 =====================  ==============  ======================
 time_rr                ≈ 1             < 1 si canaux différents
 time_pf, alpha = 1     ≈ 1             < 1 si canaux différents
@@ -45,11 +45,12 @@ Limite : le log donne le TBS **alloué**, pas les ACK. Un bloc perdu (NACK)
 compte quand même ; il s'agit d'un débit alloué, pas d'un goodput.
 
 Author: Jérémie Caradec (projet RCA, INSA Lyon)
-Date: 2026-11-04
+Date: 2026-11-04 (voie montante : 2026-11-18)
 """
 
 from __future__ import annotations
 
+import bisect
 import math
 import statistics
 from collections import defaultdict
@@ -75,7 +76,7 @@ def jain_index(values: Iterable[float]) -> float:
     """Indice d'équité de Jain.
 
     Args:
-        values: Quantités reçues par chaque UE (débits, octets, RBG...),
+        values: Quantités reçues par chaque UE (débits, octets, RBG, PRB...),
             toutes positives ou nulles.
 
     Returns:
@@ -109,14 +110,15 @@ class UeFairness:
             en Mbit/s.
         contention_bytes: Octets alloués pendant les TTI de pleine
             contention.
-        contention_rbg: RBG alloués pendant les TTI de pleine contention.
+        contention_resources: RBG (DL) ou PRB (UL) alloués pendant les TTI
+            de pleine contention.
     """
 
     rnti: int
     total_bytes: int
     mean_throughput_mbps: float
     contention_bytes: int
-    contention_rbg: int
+    contention_resources: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +129,8 @@ class FairnessReport:
         jain_throughput: J sur les octets de tout le log.
         jain_contention_throughput: J sur les octets des TTI de pleine
             contention.
-        jain_contention_rbg: J sur les RBG des TTI de pleine contention.
+        jain_contention_resources: J sur les ressources (RBG ou PRB) des TTI
+            de pleine contention.
         jain_short_term: Moyenne de J (octets) sur les fenêtres de
             ``window_tti`` TTI de pleine contention consécutifs.
         jain_short_term_min: Plus petite valeur de J parmi ces fenêtres.
@@ -139,7 +142,7 @@ class FairnessReport:
 
     jain_throughput: float
     jain_contention_throughput: float
-    jain_contention_rbg: float
+    jain_contention_resources: float
     jain_short_term: float
     jain_short_term_min: float
     window_tti: int
@@ -148,15 +151,35 @@ class FairnessReport:
     ues: tuple[UeFairness, ...] = field(default_factory=tuple)
 
 
-def _contiguous_runs(items: Sequence[ContestedTti]) -> list[list[ContestedTti]]:
-    """Découpe une suite chronologique de TTI en blocs sans trou."""
+def _contiguous_runs(
+    items: Sequence[ContestedTti], allocation_ttis: Sequence[int]
+) -> list[list[ContestedTti]]:
+    """Découpe une suite chronologique de TTI de pleine contention en blocs sans trou.
+
+    Deux TTI de pleine contention restent dans le même bloc si aucun TTI
+    **avec allocation** ne les sépare. Un TTI sans aucune allocation n'est
+    pas un trou : personne n'a rien reçu, il ne change pas le partage. C'est
+    fréquent en UL, où les grants ne tombent pas à chaque TTI (HARQ
+    synchrone, PHICH, PDCCH) ; les exiger strictement consécutifs empêcherait
+    toute fenêtre de se former.
+
+    Args:
+        items: TTI de pleine contention, dans l'ordre chronologique.
+        allocation_ttis: Tous les TTI (dépliés) qui ont au moins une
+            nouvelle transmission, triés.
+    """
     runs: list[list[ContestedTti]] = []
     for item in items:
         tti = item.winner.tti_unwrapped
-        if runs and tti - runs[-1][-1].winner.tti_unwrapped == 1:
-            runs[-1].append(item)
-        else:
-            runs.append([item])
+        if runs:
+            previous = runs[-1][-1].winner.tti_unwrapped
+            between = bisect.bisect_left(allocation_ttis, tti) - bisect.bisect_right(
+                allocation_ttis, previous
+            )
+            if between == 0:
+                runs[-1].append(item)
+                continue
+        runs.append([item])
     return runs
 
 
@@ -165,11 +188,14 @@ def _short_term_indices(
 ) -> list[float]:
     """J (octets) de chaque fenêtre complète de ``window_tti`` TTI consécutifs.
 
-    Une fenêtre ne chevauche jamais un trou (TTI sans pleine contention) :
-    sinon elle mélangerait des TTI où un UE n'avait rien à recevoir.
+    Une fenêtre ne chevauche jamais un trou (TTI avec allocation mais sans
+    pleine contention) : sinon elle mélangerait des TTI où un UE n'avait rien
+    à recevoir. ``window_tti`` compte les TTI de pleine contention, pas les
+    TTI vides intercalés.
     """
     indices: list[float] = []
-    for run in _contiguous_runs(contention):
+    allocation_ttis = sorted(timeline.allocations_by_tti)
+    for run in _contiguous_runs(contention, allocation_ttis):
         for start in range(0, len(run) - window_tti + 1, window_tti):
             received = dict.fromkeys(timeline.rntis, 0)
             for item in run[start : start + window_tti]:
@@ -218,11 +244,11 @@ def compute_fairness(
 
     contention = full_contention_ttis(timeline, transient_exclusion_tti)
     contention_bytes: dict[int, int] = defaultdict(int)
-    contention_rbg: dict[int, int] = defaultdict(int)
+    contention_resources: dict[int, int] = defaultdict(int)
     for item in contention:
         for allocation in timeline.allocations_by_tti[item.winner.tti_unwrapped]:
             contention_bytes[allocation.rnti] += allocation.tbs_bytes
-            contention_rbg[allocation.rnti] += allocation.nof_rbg
+            contention_resources[allocation.rnti] += allocation.nof_resources
 
     duration_s = (timeline.last_tti - timeline.first_tti + 1) * _TTI_DURATION_S
     ues = tuple(
@@ -231,7 +257,7 @@ def compute_fairness(
             total_bytes=total_bytes[rnti],
             mean_throughput_mbps=total_bytes[rnti] * 8 / duration_s / 1e6,
             contention_bytes=contention_bytes[rnti],
-            contention_rbg=contention_rbg[rnti],
+            contention_resources=contention_resources[rnti],
         )
         for rnti in timeline.rntis
     )
@@ -239,7 +265,7 @@ def compute_fairness(
     return FairnessReport(
         jain_throughput=jain_index(float(ue.total_bytes) for ue in ues),
         jain_contention_throughput=jain_index(float(ue.contention_bytes) for ue in ues),
-        jain_contention_rbg=jain_index(float(ue.contention_rbg) for ue in ues),
+        jain_contention_resources=jain_index(float(ue.contention_resources) for ue in ues),
         jain_short_term=statistics.fmean(short_term) if short_term else math.nan,
         jain_short_term_min=min(short_term) if short_term else math.nan,
         window_tti=window_tti,
